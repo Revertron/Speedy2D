@@ -36,7 +36,7 @@ use glutin::surface::{
     SwapInterval,
     WindowSurface
 };
-use raw_window_handle::HasRawWindowHandle;
+use raw_window_handle::HasWindowHandle;
 use winit::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use winit::error::EventLoopError;
 use winit::event::{
@@ -47,13 +47,7 @@ use winit::event::{
     TouchPhase,
     WindowEvent as GlutinWindowEvent
 };
-use winit::event_loop::{
-    ControlFlow,
-    EventLoop,
-    EventLoopBuilder,
-    EventLoopClosed,
-    EventLoopProxy
-};
+use winit::event_loop::{ControlFlow, EventLoop, EventLoopClosed, EventLoopProxy};
 use winit::keyboard::{Key, KeyLocation, NamedKey};
 use winit::monitor::MonitorHandle;
 use winit::platform::scancode::PhysicalKeyExtScancode;
@@ -63,7 +57,7 @@ use winit::window::{
     Icon,
     Window as GlutinWindow,
     Window,
-    WindowBuilder,
+    WindowAttributes,
     WindowLevel
 };
 
@@ -172,7 +166,7 @@ impl<UserEventType> WindowHelperGlutin<UserEventType>
 
     pub fn set_cursor(&self, cursor: MouseCursorType)
     {
-        self.window.set_cursor_icon(cursor.into());
+        self.window.set_cursor(CursorIcon::from(cursor));
     }
 
     pub fn set_cursor_grab(
@@ -331,21 +325,62 @@ impl<UserEventType: 'static> WindowGlutin<UserEventType>
     ) -> Result<WindowGlutin<UserEventType>, BacktraceError<WindowCreationError>>
     {
         let event_loop: EventLoop<UserEventGlutin<UserEventType>> =
-            EventLoopBuilder::with_user_event().build()?;
+            EventLoop::with_user_event().build()?;
 
-        let primary_monitor = event_loop
+        let mut window_attributes = Window::default_attributes()
+            .with_title(title)
+            .with_resizable(options.resizable)
+            .with_window_level(
+                if options.always_on_top {
+                    WindowLevel::AlwaysOnTop
+                } else {
+                    WindowLevel::Normal
+                }
+            )
+            .with_maximized(options.maximized)
+            .with_visible(false)
+            .with_transparent(options.transparent)
+            .with_decorations(options.decorations);
+
+        // Sizes that don't depend on monitor dimensions are applied at
+        // creation time. The margin-based sizes and the fullscreen mode need
+        // monitor information, which in winit 0.30 is only available once a
+        // window exists, so they are applied after creation (see below).
+        if let WindowCreationMode::Windowed { size, .. } = &options.mode {
+            match size {
+                WindowSize::PhysicalPixels(size) => {
+                    window_attributes = window_attributes
+                        .with_inner_size(PhysicalSize::new(size.x, size.y));
+                }
+                WindowSize::ScaledPixels(size) => {
+                    window_attributes = window_attributes
+                        .with_inner_size(LogicalSize::new(size.x, size.y));
+                }
+                WindowSize::MarginPhysicalPixels(_)
+                | WindowSize::MarginScaledPixels(_) => {}
+            }
+        }
+
+        let (context, window, surface) =
+            create_best_context(&window_attributes, &event_loop, &options).ok_or_else(
+                || BacktraceError::new(WindowCreationError::SuitableContextNotFound)
+            )?;
+
+        // The window is still hidden at this point, so the monitor-dependent
+        // settings applied below aren't visible to the user.
+        let primary_monitor = window
             .primary_monitor()
             .or_else(|| {
                 log::error!(
                     "Couldn't find primary monitor. Using first available monitor."
                 );
-                event_loop.available_monitors().next()
+                window.available_monitors().next()
             })
             .ok_or_else(|| {
                 BacktraceError::new(WindowCreationError::PrimaryMonitorNotFound)
             })?;
 
-        for (num, monitor) in event_loop.available_monitors().enumerate() {
+        for (num, monitor) in window.available_monitors().enumerate() {
             log::debug!(
                 "Monitor #{}{}: {}",
                 num,
@@ -361,38 +396,27 @@ impl<UserEventType: 'static> WindowGlutin<UserEventType>
             );
         }
 
-        let mut window_builder = WindowBuilder::new()
-            .with_title(title)
-            .with_resizable(options.resizable)
-            .with_window_level(
-                if options.always_on_top {
-                    WindowLevel::AlwaysOnTop
-                } else {
-                    WindowLevel::Normal
-                }
-            )
-            .with_maximized(options.maximized)
-            .with_visible(false)
-            .with_transparent(options.transparent)
-            .with_decorations(options.decorations);
-
         match &options.mode {
-            WindowCreationMode::Windowed { size, .. } => {
-                window_builder = window_builder
-                    .with_inner_size(compute_window_size(&primary_monitor, size));
-            }
+            WindowCreationMode::Windowed { size, .. } => match size {
+                WindowSize::MarginPhysicalPixels(_)
+                | WindowSize::MarginScaledPixels(_) => {
+                    let _ = window
+                        .request_inner_size(compute_window_size(&primary_monitor, size));
+                }
+                WindowSize::PhysicalPixels(_) | WindowSize::ScaledPixels(_) => {
+                    // Already applied via the window attributes.
+                }
+            },
 
             WindowCreationMode::FullscreenBorderless => {
-                window_builder = window_builder.with_fullscreen(Some(
-                    winit::window::Fullscreen::Borderless(Some(primary_monitor.clone()))
-                ));
+                window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(
+                    Some(primary_monitor.clone())
+                )));
             }
         }
 
-        let (context, window, surface) =
-            create_best_context(&window_builder, &event_loop, &options).ok_or_else(
-                || BacktraceError::new(WindowCreationError::SuitableContextNotFound)
-            )?;
+        // Keep the GL surface in sync with the size applied above.
+        window.resize_surface(&surface, &context);
 
         if let WindowCreationMode::Windowed {
             position: Some(position),
@@ -499,7 +523,16 @@ impl<UserEventType: 'static> WindowGlutin<UserEventType>
                         surface.resize(context, w, h);
                     }
                     helper.inner().physical_size = physical_size.into();
-                    handler.on_resize(helper, physical_size.into())
+                    handler.on_resize(helper, physical_size.into());
+
+                    // Draw immediately after resize so the window updates
+                    // during interactive drag on Windows, where AboutToWait
+                    // does not fire until the drag ends.
+                    if helper.inner().is_redraw_requested() {
+                        helper.inner().set_redraw_requested(false);
+                        handler.on_draw(helper);
+                        surface.swap_buffers(context).unwrap();
+                    }
                 }
 
                 GlutinWindowEvent::CloseRequested => return WindowEventLoopAction::Exit,
@@ -651,6 +684,10 @@ impl<UserEventType: 'static> WindowGlutin<UserEventType>
 
         let mut handler = Some(handler);
 
+        // The deprecated closure-based API is intentionally kept here: Speedy2D
+        // creates the window and GL context before the loop starts, which the
+        // ApplicationHandler API does not support on this architecture.
+        #[allow(deprecated)]
         let result = event_loop.run(
             move |event: GlutinEvent<UserEventGlutin<UserEventType>>, target| {
                 if handler.is_none() {
@@ -705,7 +742,7 @@ fn gl_config_picker(mut configs: Box<dyn Iterator<Item = Config> + '_>)
 }
 
 fn create_best_context<UserEventType>(
-    window_builder: &WindowBuilder,
+    window_attributes: &WindowAttributes,
     event_loop: &EventLoop<UserEventType>,
     options: &WindowCreationOptions
 ) -> Option<(PossiblyCurrentContext, Window, Surface<WindowSurface>)>
@@ -724,7 +761,7 @@ fn create_best_context<UserEventType>(
         }
 
         let result = DisplayBuilder::new()
-            .with_window_builder(Some(window_builder.clone()))
+            .with_window_attributes(Some(window_attributes.clone()))
             .build(event_loop, template, gl_config_picker);
 
         let (window, gl_config) = match result {
@@ -744,9 +781,17 @@ fn create_best_context<UserEventType>(
 
         let gl_display = gl_config.display();
 
+        let raw_window_handle = match window.window_handle() {
+            Ok(handle) => Some(handle.as_raw()),
+            Err(err) => {
+                log::info!("Failed to get window handle: {err:?}");
+                None
+            }
+        };
+
         let context_attributes = ContextAttributesBuilder::new()
             .with_context_api(ContextApi::OpenGl(Some(Version::new(2, 0))))
-            .build(Some(window.raw_window_handle()));
+            .build(raw_window_handle);
 
         let context =
             match unsafe { gl_display.create_context(&gl_config, &context_attributes) } {
@@ -759,7 +804,7 @@ fn create_best_context<UserEventType>(
 
         let window = match crate::glutin_winit::finalize_window(
             event_loop,
-            window_builder.clone(),
+            window_attributes.clone(),
             &gl_config
         ) {
             Ok(window) => window,
@@ -769,7 +814,14 @@ fn create_best_context<UserEventType>(
             }
         };
 
-        let attrs = window.build_surface_attributes(SurfaceAttributesBuilder::default());
+        let attrs =
+            match window.build_surface_attributes(SurfaceAttributesBuilder::default()) {
+                Ok(attrs) => attrs,
+                Err(err) => {
+                    log::info!("Failed to build surface attributes with error: {err:?}");
+                    continue;
+                }
+            };
 
         let surface = match unsafe {
             gl_config

@@ -345,7 +345,11 @@ impl Polygon
             flattened.push(vertex.y);
         }
 
-        let mut triangulation = earcutr::earcut(&flattened, &Vec::new(), 2);
+        let mut triangulation =
+            earcutr::earcut(&flattened, &Vec::new(), 2).unwrap_or_else(|err| {
+                log::error!("Failed to triangulate polygon: {:?}", err);
+                Vec::new()
+            });
         let mut triangles = Vec::with_capacity(triangulation.len() / 3);
 
         while !triangulation.is_empty() {

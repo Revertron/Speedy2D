@@ -149,7 +149,7 @@ pub trait GLBackend
     unsafe fn gl_delete_buffer(&self, handle: GLTypeBuffer);
     unsafe fn gl_delete_texture(&self, handle: GLTypeTexture);
     unsafe fn gl_active_texture(&self, unit: GLenum);
-    unsafe fn gl_bind_texture(&self, target: GLenum, handle: GLTypeTexture);
+    unsafe fn gl_bind_texture(&self, target: GLenum, handle: Option<GLTypeTexture>);
     unsafe fn gl_enable(&self, cap: GLenum);
     unsafe fn gl_disable(&self, cap: GLenum);
     #[allow(dead_code)]
@@ -331,8 +331,33 @@ pub struct GLBackendGlow
 impl GLBackendGlow
 {
     #[must_use]
-    pub fn new(context: glow::Context) -> Self
+    pub fn new(mut context: glow::Context) -> Self
     {
+        // glow requires exclusive access to the context to register the debug
+        // callback, so it's registered here during construction. Debug output
+        // stays disabled until `gl_enable_debug_message_callback` is called.
+        if context.supports_debug() {
+            fn gl_log_callback(
+                _source: GLenum,
+                _gltype: GLenum,
+                _id: GLuint,
+                severity: GLenum,
+                msg: &str
+            )
+            {
+                match severity {
+                    glow::DEBUG_SEVERITY_HIGH => log::error!("GL debug log: {}", msg),
+                    glow::DEBUG_SEVERITY_MEDIUM => log::warn!("GL debug log: {}", msg),
+                    glow::DEBUG_SEVERITY_LOW => log::info!("GL debug log: {}", msg),
+                    _ => log::debug!("GL debug log: {}", msg)
+                }
+            }
+
+            unsafe {
+                context.debug_message_callback(gl_log_callback);
+            }
+        }
+
         GLBackendGlow { context }
     }
 }
@@ -364,9 +389,9 @@ impl GLBackend for GLBackendGlow
         self.context.active_texture(unit)
     }
 
-    unsafe fn gl_bind_texture(&self, target: GLenum, handle: GLTypeTexture)
+    unsafe fn gl_bind_texture(&self, target: GLenum, handle: Option<GLTypeTexture>)
     {
-        self.context.bind_texture(target, Some(handle))
+        self.context.bind_texture(target, handle)
     }
 
     unsafe fn gl_enable(&self, cap: GLenum)
@@ -478,23 +503,7 @@ impl GLBackend for GLBackendGlow
             return;
         }
 
-        fn gl_log_callback(
-            _source: GLenum,
-            _gltype: GLenum,
-            _id: GLuint,
-            severity: GLenum,
-            msg: &str
-        )
-        {
-            match severity {
-                glow::DEBUG_SEVERITY_HIGH => log::error!("GL debug log: {}", msg),
-                glow::DEBUG_SEVERITY_MEDIUM => log::warn!("GL debug log: {}", msg),
-                glow::DEBUG_SEVERITY_LOW => log::info!("GL debug log: {}", msg),
-                _ => log::debug!("GL debug log: {}", msg)
-            }
-        }
-
-        self.context.debug_message_callback(gl_log_callback);
+        // The callback itself is registered in `GLBackendGlow::new`.
         self.gl_enable(glow::DEBUG_OUTPUT);
         self.gl_enable(glow::DEBUG_OUTPUT_SYNCHRONOUS);
 
@@ -557,7 +566,7 @@ impl GLBackend for GLBackendGlow
             border,
             format,
             data_type,
-            pixels
+            glow::PixelUnpackData::Slice(pixels)
         )
     }
 
@@ -583,7 +592,7 @@ impl GLBackend for GLBackendGlow
             height,
             format,
             data_type,
-            glow::PixelUnpackData::Slice(pixels)
+            glow::PixelUnpackData::Slice(Some(pixels))
         )
     }
 
@@ -699,7 +708,7 @@ impl GLBackend for GLBackendGlow
             height,
             format,
             data_type,
-            PixelPackData::Slice(data)
+            PixelPackData::Slice(Some(data))
         )
     }
 }
