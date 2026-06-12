@@ -317,6 +317,157 @@ pub trait WindowHandler<UserEventType = ()>
     }
 }
 
+/// Boxed handlers delegate to their contents, so the multi-window machinery
+/// can store windows with differing handler types in one collection.
+impl<UserEventType, H> WindowHandler<UserEventType> for Box<H>
+where
+    H: WindowHandler<UserEventType> + ?Sized
+{
+    #[inline]
+    fn on_start(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        info: WindowStartupInfo
+    )
+    {
+        (**self).on_start(helper, info)
+    }
+
+    #[inline]
+    fn on_user_event(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        user_event: UserEventType
+    )
+    {
+        (**self).on_user_event(helper, user_event)
+    }
+
+    #[inline]
+    fn on_resize(&mut self, helper: &mut WindowHelper<UserEventType>, size_pixels: UVec2)
+    {
+        (**self).on_resize(helper, size_pixels)
+    }
+
+    #[inline]
+    fn on_mouse_grab_status_changed(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        mouse_grabbed: bool
+    )
+    {
+        (**self).on_mouse_grab_status_changed(helper, mouse_grabbed)
+    }
+
+    #[inline]
+    fn on_fullscreen_status_changed(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        fullscreen: bool
+    )
+    {
+        (**self).on_fullscreen_status_changed(helper, fullscreen)
+    }
+
+    #[inline]
+    fn on_scale_factor_changed(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        scale_factor: f64
+    )
+    {
+        (**self).on_scale_factor_changed(helper, scale_factor)
+    }
+
+    #[inline]
+    fn on_draw(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        graphics: &mut Graphics2D
+    )
+    {
+        (**self).on_draw(helper, graphics)
+    }
+
+    #[inline]
+    fn on_mouse_move(&mut self, helper: &mut WindowHelper<UserEventType>, position: Vec2)
+    {
+        (**self).on_mouse_move(helper, position)
+    }
+
+    #[inline]
+    fn on_mouse_button_down(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        button: MouseButton
+    )
+    {
+        (**self).on_mouse_button_down(helper, button)
+    }
+
+    #[inline]
+    fn on_mouse_button_up(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        button: MouseButton
+    )
+    {
+        (**self).on_mouse_button_up(helper, button)
+    }
+
+    #[inline]
+    fn on_mouse_wheel_scroll(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        distance: MouseScrollDistance
+    )
+    {
+        (**self).on_mouse_wheel_scroll(helper, distance)
+    }
+
+    #[inline]
+    fn on_key_down(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        virtual_key_code: Option<VirtualKeyCode>,
+        scancode: KeyScancode
+    )
+    {
+        (**self).on_key_down(helper, virtual_key_code, scancode)
+    }
+
+    #[inline]
+    fn on_key_up(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        virtual_key_code: Option<VirtualKeyCode>,
+        scancode: KeyScancode
+    )
+    {
+        (**self).on_key_up(helper, virtual_key_code, scancode)
+    }
+
+    #[inline]
+    fn on_keyboard_char(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        unicode_codepoint: char
+    )
+    {
+        (**self).on_keyboard_char(helper, unicode_codepoint)
+    }
+
+    #[inline]
+    fn on_keyboard_modifiers_changed(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        state: ModifiersState
+    )
+    {
+        (**self).on_keyboard_modifiers_changed(helper, state)
+    }
+}
+
 pub(crate) struct DrawingWindowHandler<UserEventType, H>
 where
     UserEventType: 'static,
@@ -669,10 +820,54 @@ impl<UserEventType> WindowHelper<UserEventType>
     /// Creates a [UserEventSender], which can be used to post custom events to
     /// this event loop from another thread.
     ///
+    /// Events from a sender created here are delivered to **this window's**
+    /// handler. Senders created via [crate::Window::create_user_event_sender]
+    /// (before the loop starts) deliver to the main window.
+    ///
     /// See [UserEventSender::send_event], [WindowHandler::on_user_event].
     pub fn create_user_event_sender(&self) -> UserEventSender<UserEventType>
     {
         self.inner.create_user_event_sender()
+    }
+
+    /// Opens an additional window with its own handler, rendering context and
+    /// event routing. The window is created once the current callback
+    /// returns.
+    ///
+    /// Closing the main (first) window still exits the app; windows created
+    /// here close individually.
+    #[cfg(all(not(target_arch = "wasm32"), not(any(doc, doctest))))]
+    pub fn create_window(
+        &self,
+        title: &str,
+        options: WindowCreationOptions,
+        handler: Box<dyn WindowHandler<UserEventType>>
+    )
+    {
+        self.inner.create_window(title, options, handler, false);
+    }
+
+    /// Like [WindowHelper::create_window], but the new window is
+    /// application-modal: until it is closed, all other windows ignore mouse,
+    /// keyboard and close events, and clicking them refocuses the modal
+    /// window. Modal windows stack.
+    #[cfg(all(not(target_arch = "wasm32"), not(any(doc, doctest))))]
+    pub fn create_modal_window(
+        &self,
+        title: &str,
+        options: WindowCreationOptions,
+        handler: Box<dyn WindowHandler<UserEventType>>
+    )
+    {
+        self.inner.create_window(title, options, handler, true);
+    }
+
+    /// Closes this window once the current callback returns, dropping its
+    /// handler. If this is the main (first) window, the whole app exits.
+    #[cfg(all(not(target_arch = "wasm32"), not(any(doc, doctest))))]
+    pub fn close_window(&self)
+    {
+        self.inner.close_window();
     }
 }
 
@@ -1119,6 +1314,12 @@ pub enum WindowPosition
 {
     /// Place the window in the center of the primary monitor.
     Center,
+    /// Center the window over its parent window. Only meaningful for child
+    /// windows opened via [WindowHelper::create_window] /
+    /// [WindowHelper::create_modal_window]; falls back to
+    /// [WindowPosition::Center] when there is no parent (e.g. the main
+    /// window).
+    CenterOnParent,
     /// Place the window at the specified pixel location from the top left of
     /// the primary monitor.
     PrimaryMonitorPixelsFromTopLeft(IVec2)

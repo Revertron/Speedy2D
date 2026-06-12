@@ -15,7 +15,7 @@ use raw_window_handle::HasWindowHandle;
 use raw_window_handle::{HasDisplayHandle, RawWindowHandle};
 pub use window::GlWindow;
 use winit::error::OsError;
-use winit::event_loop::EventLoop;
+use winit::event_loop::ActiveEventLoop;
 #[cfg(glx_backend)]
 use winit::platform::x11::register_xlib_error_hook;
 #[cfg(x11_platform)]
@@ -86,9 +86,9 @@ impl DisplayBuilder
     /// **WGL:** - [`WindowAttributes`] **must** be passed in
     /// [`Self::with_window_attributes`] if modern OpenGL(ES) is desired,
     /// otherwise only builtin functions like `glClear` will be available.
-    pub fn build<T, Picker>(
+    pub fn build<Picker>(
         mut self,
-        event_loop: &EventLoop<T>,
+        event_loop: &ActiveEventLoop,
         template_builder: ConfigTemplateBuilder,
         config_picker: Picker
     ) -> Result<(Option<Window>, Config), Box<dyn Error>>
@@ -98,7 +98,6 @@ impl DisplayBuilder
         // XXX with WGL backend window should be created first.
         #[cfg(wgl_backend)]
         let window = if let Some(wa) = self.window_attributes.take() {
-            #[allow(deprecated)]
             Some(event_loop.create_window(wa)?)
         } else {
             None
@@ -142,8 +141,8 @@ impl DisplayBuilder
     }
 }
 
-fn create_display<T>(
-    event_loop: &EventLoop<T>,
+fn create_display(
+    event_loop: &ActiveEventLoop,
     _api_preference: ApiPreference,
     _raw_window_handle: Option<RawWindowHandle>
 ) -> Result<Display, Box<dyn Error>>
@@ -190,8 +189,8 @@ fn create_display<T>(
 ///
 /// [`Window`]: winit::window::Window
 /// [`Config`]: glutin::config::Config
-pub fn finalize_window<T>(
-    event_loop: &EventLoop<T>,
+pub fn finalize_window(
+    event_loop: &ActiveEventLoop,
     mut attributes: WindowAttributes,
     gl_config: &Config
 ) -> Result<Window, OsError>
@@ -208,7 +207,6 @@ pub fn finalize_window<T>(
         attributes
     };
 
-    #[allow(deprecated)]
     event_loop.create_window(attributes)
 }
 

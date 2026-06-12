@@ -1371,8 +1371,7 @@ pub struct Window<UserEventType = ()>
 where
     UserEventType: 'static
 {
-    window_impl: WindowGlutin<UserEventType>,
-    renderer: GLRenderer
+    window_impl: WindowGlutin<UserEventType>
 }
 
 #[cfg(any(doc, doctest, all(feature = "windowing", not(target_arch = "wasm32"))))]
@@ -1432,23 +1431,10 @@ impl<UserEventType: 'static> Window<UserEventType>
         options: WindowCreationOptions
     ) -> Result<Self, BacktraceError<WindowCreationError>>
     {
-        let window_impl = WindowGlutin::new(title, options)?;
-
-        let renderer = GLRenderer::new_with_gl_backend(
-            window_impl.get_inner_size_pixels(),
-            window_impl.gl_backend().clone(),
-            GLVersion::OpenGL2_0
-        )
-        .map_err(|err| {
-            BacktraceError::new_with_cause(
-                WindowCreationError::RendererCreationFailed,
-                err
-            )
-        })?;
-
+        // The window, GL context and renderer are created once the event
+        // loop is running, so only event loop creation can fail here.
         Ok(Window {
-            window_impl,
-            renderer
+            window_impl: WindowGlutin::new(title, options)?
         })
     }
 
@@ -1473,7 +1459,7 @@ impl<UserEventType: 'static> Window<UserEventType>
     where
         H: WindowHandler<UserEventType> + 'static
     {
-        self.window_impl.run_loop(handler, self.renderer);
+        self.window_impl.run_loop(handler);
     }
 }
 
