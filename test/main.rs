@@ -33,7 +33,7 @@ use glutin::context::{
 use glutin::display::{GetGlDisplay, GlDisplay};
 use glutin::surface::{PbufferSurface, SurfaceAttributesBuilder};
 use glutin_winit::DisplayBuilder;
-use image::{ColorType, GenericImageView, ImageFormat};
+use image::{ExtendedColorType, GenericImageView, ImageFormat};
 use num_traits::ToPrimitive;
 use speedy2d::color::Color;
 use speedy2d::dimen::{Vec2, Vector2};
@@ -58,7 +58,7 @@ fn write_rgba_to_png<S: AsRef<str>>(name: S, width: u32, height: u32, buf: &[u8]
         buf,
         width,
         height,
-        ColorType::Rgba8,
+        ExtendedColorType::Rgba8,
         ImageFormat::Png
     )
     .unwrap();
@@ -66,7 +66,7 @@ fn write_rgba_to_png<S: AsRef<str>>(name: S, width: u32, height: u32, buf: &[u8]
 
 fn read_png_argb8<S: AsRef<str>>(name: S) -> Option<Vec<u8>>
 {
-    image::io::Reader::open(get_expected_image_path(name))
+    image::ImageReader::open(get_expected_image_path(name))
         .ok()
         .and_then(|reader| reader.decode().ok())
         .map(|image| image.into_rgba8().into_raw())

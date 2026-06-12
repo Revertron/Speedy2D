@@ -317,6 +317,157 @@ pub trait WindowHandler<UserEventType = ()>
     }
 }
 
+/// Boxed handlers delegate to their contents, so the multi-window machinery
+/// can store windows with differing handler types in one collection.
+impl<UserEventType, H> WindowHandler<UserEventType> for Box<H>
+where
+    H: WindowHandler<UserEventType> + ?Sized
+{
+    #[inline]
+    fn on_start(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        info: WindowStartupInfo
+    )
+    {
+        (**self).on_start(helper, info)
+    }
+
+    #[inline]
+    fn on_user_event(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        user_event: UserEventType
+    )
+    {
+        (**self).on_user_event(helper, user_event)
+    }
+
+    #[inline]
+    fn on_resize(&mut self, helper: &mut WindowHelper<UserEventType>, size_pixels: UVec2)
+    {
+        (**self).on_resize(helper, size_pixels)
+    }
+
+    #[inline]
+    fn on_mouse_grab_status_changed(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        mouse_grabbed: bool
+    )
+    {
+        (**self).on_mouse_grab_status_changed(helper, mouse_grabbed)
+    }
+
+    #[inline]
+    fn on_fullscreen_status_changed(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        fullscreen: bool
+    )
+    {
+        (**self).on_fullscreen_status_changed(helper, fullscreen)
+    }
+
+    #[inline]
+    fn on_scale_factor_changed(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        scale_factor: f64
+    )
+    {
+        (**self).on_scale_factor_changed(helper, scale_factor)
+    }
+
+    #[inline]
+    fn on_draw(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        graphics: &mut Graphics2D
+    )
+    {
+        (**self).on_draw(helper, graphics)
+    }
+
+    #[inline]
+    fn on_mouse_move(&mut self, helper: &mut WindowHelper<UserEventType>, position: Vec2)
+    {
+        (**self).on_mouse_move(helper, position)
+    }
+
+    #[inline]
+    fn on_mouse_button_down(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        button: MouseButton
+    )
+    {
+        (**self).on_mouse_button_down(helper, button)
+    }
+
+    #[inline]
+    fn on_mouse_button_up(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        button: MouseButton
+    )
+    {
+        (**self).on_mouse_button_up(helper, button)
+    }
+
+    #[inline]
+    fn on_mouse_wheel_scroll(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        distance: MouseScrollDistance
+    )
+    {
+        (**self).on_mouse_wheel_scroll(helper, distance)
+    }
+
+    #[inline]
+    fn on_key_down(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        virtual_key_code: Option<VirtualKeyCode>,
+        scancode: KeyScancode
+    )
+    {
+        (**self).on_key_down(helper, virtual_key_code, scancode)
+    }
+
+    #[inline]
+    fn on_key_up(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        virtual_key_code: Option<VirtualKeyCode>,
+        scancode: KeyScancode
+    )
+    {
+        (**self).on_key_up(helper, virtual_key_code, scancode)
+    }
+
+    #[inline]
+    fn on_keyboard_char(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        unicode_codepoint: char
+    )
+    {
+        (**self).on_keyboard_char(helper, unicode_codepoint)
+    }
+
+    #[inline]
+    fn on_keyboard_modifiers_changed(
+        &mut self,
+        helper: &mut WindowHelper<UserEventType>,
+        state: ModifiersState
+    )
+    {
+        (**self).on_keyboard_modifiers_changed(helper, state)
+    }
+}
+
 pub(crate) struct DrawingWindowHandler<UserEventType, H>
 where
     UserEventType: 'static,
@@ -573,6 +724,12 @@ impl<UserEventType> WindowHelper<UserEventType>
         self.inner.set_cursor_grab(grabbed)
     }
 
+    /// Sets the shape of the mouse cursor shown over the window.
+    pub fn set_cursor(&self, cursor: MouseCursorType)
+    {
+        self.inner.set_cursor(cursor)
+    }
+
     /// Set to false to prevent the user from resizing the window.
     ///
     /// For `WebCanvas`, this function has no effect.
@@ -663,10 +820,54 @@ impl<UserEventType> WindowHelper<UserEventType>
     /// Creates a [UserEventSender], which can be used to post custom events to
     /// this event loop from another thread.
     ///
+    /// Events from a sender created here are delivered to **this window's**
+    /// handler. Senders created via [crate::Window::create_user_event_sender]
+    /// (before the loop starts) deliver to the main window.
+    ///
     /// See [UserEventSender::send_event], [WindowHandler::on_user_event].
     pub fn create_user_event_sender(&self) -> UserEventSender<UserEventType>
     {
         self.inner.create_user_event_sender()
+    }
+
+    /// Opens an additional window with its own handler, rendering context and
+    /// event routing. The window is created once the current callback
+    /// returns.
+    ///
+    /// Closing the main (first) window still exits the app; windows created
+    /// here close individually.
+    #[cfg(all(not(target_arch = "wasm32"), not(any(doc, doctest))))]
+    pub fn create_window(
+        &self,
+        title: &str,
+        options: WindowCreationOptions,
+        handler: Box<dyn WindowHandler<UserEventType>>
+    )
+    {
+        self.inner.create_window(title, options, handler, false);
+    }
+
+    /// Like [WindowHelper::create_window], but the new window is
+    /// application-modal: until it is closed, all other windows ignore mouse,
+    /// keyboard and close events, and clicking them refocuses the modal
+    /// window. Modal windows stack.
+    #[cfg(all(not(target_arch = "wasm32"), not(any(doc, doctest))))]
+    pub fn create_modal_window(
+        &self,
+        title: &str,
+        options: WindowCreationOptions,
+        handler: Box<dyn WindowHandler<UserEventType>>
+    )
+    {
+        self.inner.create_window(title, options, handler, true);
+    }
+
+    /// Closes this window once the current callback returns, dropping its
+    /// handler. If this is the main (first) window, the whole app exits.
+    #[cfg(all(not(target_arch = "wasm32"), not(any(doc, doctest))))]
+    pub fn close_window(&self)
+    {
+        self.inner.close_window();
     }
 }
 
@@ -735,6 +936,66 @@ pub enum MouseButton
     Forward,
     /// Another mouse button, identified by a number.
     Other(u16)
+}
+
+/// Identifies the shape of the mouse cursor displayed over the window. See
+/// [WindowHelper::set_cursor].
+///
+/// The variants mirror the standard CSS cursor keywords and map directly onto
+/// the native cursors provided by each platform backend.
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Default)]
+#[non_exhaustive]
+pub enum MouseCursorType
+{
+    /// The platform-dependent default cursor (usually an arrow).
+    #[default]
+    Default,
+    /// A pointing hand, typically used to indicate a link.
+    Pointer,
+    /// A crosshair.
+    Crosshair,
+    /// Indicates editable text (usually an I-beam).
+    Text,
+    /// Indicates editable vertical text.
+    VerticalText,
+    /// Indicates that something can be moved.
+    Move,
+    /// Indicates that something can be grabbed (an open hand).
+    Grab,
+    /// Indicates that something is being grabbed (a closed hand).
+    Grabbing,
+    /// Indicates that the program is busy and the user should wait.
+    Wait,
+    /// Indicates that the program is busy in the background, but the user can
+    /// still interact with the interface.
+    Progress,
+    /// Indicates that a cell or set of cells may be selected.
+    Cell,
+    /// Indicates an alias of/shortcut to something is to be created.
+    Alias,
+    /// Indicates something is to be copied.
+    Copy,
+    /// Indicates that the dragged item cannot be dropped at the current
+    /// location.
+    NoDrop,
+    /// Indicates that the requested action will not be carried out.
+    NotAllowed,
+    /// Indicates that an edge of a box is to be moved left/right.
+    ColResize,
+    /// Indicates that an edge of a box is to be moved up/down.
+    RowResize,
+    /// Indicates a horizontal (east-west) resize.
+    EwResize,
+    /// Indicates a vertical (north-south) resize.
+    NsResize,
+    /// Indicates a bidirectional north-east/south-west resize.
+    NeswResize,
+    /// Indicates a bidirectional north-west/south-east resize.
+    NwseResize,
+    /// Indicates that something can be zoomed in.
+    ZoomIn,
+    /// Indicates that something can be zoomed out.
+    ZoomOut
 }
 
 /// Describes a difference in the mouse scroll wheel position.
@@ -1053,6 +1314,12 @@ pub enum WindowPosition
 {
     /// Place the window in the center of the primary monitor.
     Center,
+    /// Center the window over its parent window. Only meaningful for child
+    /// windows opened via [WindowHelper::create_window] /
+    /// [WindowHelper::create_modal_window]; falls back to
+    /// [WindowPosition::Center] when there is no parent (e.g. the main
+    /// window).
+    CenterOnParent,
     /// Place the window at the specified pixel location from the top left of
     /// the primary monitor.
     PrimaryMonitorPixelsFromTopLeft(IVec2)

@@ -33,25 +33,26 @@ use glutin::display::{GetGlDisplay, GlDisplay};
 use glutin::prelude::GlSurface;
 use glutin::surface::{Surface, SurfaceAttributesBuilder, WindowSurface};
 use glutin_winit::{DisplayBuilder, GlWindow};
-use raw_window_handle::HasRawWindowHandle;
+use raw_window_handle::HasWindowHandle;
 use speedy2d::color::Color;
 use speedy2d::font::{Font, FormattedTextBlock, TextLayout, TextOptions};
 use speedy2d::{GLRenderer, Graphics2D};
 use winit::dpi::PhysicalSize;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
-use winit::window::{Window, WindowBuilder};
+use winit::window::{Window, WindowAttributes};
 
 fn main()
 {
     let event_loop = EventLoop::new().unwrap();
 
-    let builder = WindowBuilder::new()
+    let attributes = Window::default_attributes()
         .with_title("Speedy2D: Hello World")
         .with_visible(true)
         .with_inner_size(PhysicalSize::new(640, 240));
 
-    let (context, _window, surface) = create_best_context(&builder, &event_loop).unwrap();
+    let (context, _window, surface) =
+        create_best_context(&attributes, &event_loop).unwrap();
 
     let mut renderer = unsafe {
         GLRenderer::new_for_gl_context((640, 240), |fn_name| {
@@ -66,6 +67,7 @@ fn main()
     let font = Font::new(include_bytes!("../assets/fonts/NotoSans-Regular.ttf")).unwrap();
     let text = font.layout_text("Hello world!", 64.0, TextOptions::new());
 
+    #[allow(deprecated)]
     event_loop
         .run(move |event, target| {
             target.set_control_flow(ControlFlow::Poll);
@@ -96,7 +98,7 @@ fn render_frame(graphics: &mut Graphics2D, text: &FormattedTextBlock)
 }
 
 fn create_best_context<UserEventType>(
-    window_builder: &WindowBuilder,
+    window_attributes: &WindowAttributes,
     event_loop: &EventLoop<UserEventType>
 ) -> Option<(PossiblyCurrentContext, Window, Surface<WindowSurface>)>
 {
@@ -114,7 +116,7 @@ fn create_best_context<UserEventType>(
         }
 
         let result = DisplayBuilder::new()
-            .with_window_builder(Some(window_builder.clone()))
+            .with_window_attributes(Some(window_attributes.clone()))
             .build(event_loop, template, |mut configs| configs.next().unwrap());
 
         let (window, gl_config) = match result {
@@ -136,7 +138,7 @@ fn create_best_context<UserEventType>(
 
         let context_attributes = ContextAttributesBuilder::new()
             .with_context_api(ContextApi::OpenGl(Some(Version::new(2, 0))))
-            .build(Some(window.raw_window_handle()));
+            .build(Some(window.window_handle().unwrap().as_raw()));
 
         let context =
             match unsafe { gl_display.create_context(&gl_config, &context_attributes) } {
@@ -149,7 +151,7 @@ fn create_best_context<UserEventType>(
 
         let window = match glutin_winit::finalize_window(
             event_loop,
-            window_builder.clone(),
+            window_attributes.clone(),
             &gl_config
         ) {
             Ok(window) => window,
@@ -159,7 +161,9 @@ fn create_best_context<UserEventType>(
             }
         };
 
-        let attrs = window.build_surface_attributes(SurfaceAttributesBuilder::default());
+        let attrs = window
+            .build_surface_attributes(SurfaceAttributesBuilder::default())
+            .unwrap();
 
         let surface = match unsafe {
             gl_config

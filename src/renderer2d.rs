@@ -753,7 +753,7 @@ impl Renderer2D
         file_bytes: R
     ) -> Result<ImageHandle, BacktraceError<ErrorMessage>>
     {
-        let mut reader = image::io::Reader::new(file_bytes);
+        let mut reader = image::ImageReader::new(file_bytes);
 
         match data_type {
             None => {

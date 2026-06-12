@@ -967,7 +967,7 @@ impl GLContextManager
 
         self.with_gl_backend(|backend| unsafe {
             backend.gl_active_texture(GL_TEXTURE0);
-            backend.gl_bind_texture(GL_TEXTURE_2D, texture.get_handle());
+            backend.gl_bind_texture(GL_TEXTURE_2D, Some(texture.get_handle()));
         });
     }
 
@@ -991,7 +991,7 @@ impl GLContextManager
 
             self.with_gl_backend(|backend| unsafe {
                 backend.gl_active_texture(GL_TEXTURE0);
-                backend.gl_bind_texture(GL_TEXTURE_2D, 0);
+                backend.gl_bind_texture(GL_TEXTURE_2D, None);
             });
 
             // Drop separately to avoid a duplicate borrow of `state`.
