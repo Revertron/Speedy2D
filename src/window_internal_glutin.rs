@@ -1132,6 +1132,19 @@ fn build_window_attributes(
         }
     }
 
+    // On Windows, use the icon embedded in the executable's resources (e.g. set
+    // at build time via the `winres` crate). `winres`'s default `set_icon`
+    // embeds the application icon at resource id 1, which is what we load here.
+    // If no such resource exists, `from_resource` fails and the window keeps the
+    // default icon.
+    #[cfg(target_os = "windows")]
+    {
+        use winit::platform::windows::IconExtWindows;
+        if let Ok(icon) = Icon::from_resource(1, None) {
+            window_attributes = window_attributes.with_window_icon(Some(icon));
+        }
+    }
+
     window_attributes
 }
 
